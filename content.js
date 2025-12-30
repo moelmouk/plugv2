@@ -209,24 +209,23 @@ function getUniqueSelector(element) {
     return `${tagName}[name="${element.name}"]`;
   }
   
-  // PRIORITÉ 3: ID (avec validation STRICTE)
+  // PRIORITÉ 3: ID (avec validation STRICTE - mais accepter les IDs longs stables)
   if (element.id) {
     const hasInvalidChars = /[{}()\[\];<>]/.test(element.id);
     const hasJsKeywords = /function|return|throw|let|const|var|if|else/.test(element.id);
-    const isTooLong = element.id.length > 50;
     
-    if (!hasInvalidChars && !hasJsKeywords && !isTooLong) {
-      const idSelector = `#${element.id}`;
-      if (isValidCssSelector(idSelector)) {
-        return idSelector;
-      }
+    // Accepter les IDs longs SI ils ne contiennent pas de code JS
+    // Les IDs Angular comme "market-place_borrower_client-needs_..." sont OK
+    if (!hasInvalidChars && !hasJsKeywords) {
+      const tagName = element.tagName.toLowerCase();
+      // Utiliser XPath pour les IDs (plus robuste que CSS pour les IDs longs)
+      return `xpath=//${tagName}[@id="${element.id}"]`;
     } else {
       console.log('⚠️ ID dynamique ignoré:', element.id.substring(0, 50) + '...');
     }
   }
   
-  // PRIORITÉ 4: XPath pour éléments Angular
-  // Pour les éléments avec texte
+  // PRIORITÉ 4: XPath pour éléments Angular avec texte
   if (['NG-OPTION', 'LABEL', 'SPAN', 'BUTTON'].includes(element.tagName)) {
     const text = element.textContent?.trim();
     if (text && text.length > 0 && text.length < 100) {
@@ -237,11 +236,10 @@ function getUniqueSelector(element) {
     }
   }
   
-  // Pour les DIV dans ng-select (dropdowns Angular)
+  // PRIORITÉ 5: Pour les DIV dans ng-select (dropdowns Angular)
   if (element.tagName === 'DIV') {
     const ngSelect = element.closest('ng-select');
     if (ngSelect) {
-      // C'est un élément de dropdown Angular
       const xpath = getXPathForNgSelectElement(element, ngSelect);
       if (xpath) {
         return xpath;
@@ -249,28 +247,26 @@ function getUniqueSelector(element) {
     }
   }
   
-  // Pour les INPUT radio/checkbox avec label associé
+  // PRIORITÉ 6: Pour les INPUT radio/checkbox avec label associé
   if (element.tagName === 'INPUT' && ['radio', 'checkbox'].includes(element.type)) {
     const label = element.nextElementSibling;
     if (label && label.tagName === 'LABEL') {
       const labelText = label.textContent?.trim();
       if (labelText) {
         const escapedText = labelText.replace(/"/g, '\\"');
-        return `xpath=//label[normalize-space(text())="${escapedText}"]/preceding-sibling::input[@type="${element.type}"]`;
+        return `xpath=//label[contains(., "${escapedText}")]/preceding-sibling::input[@type="${element.type}"]`;
       }
     }
   }
   
-  // PRIORITÉ 4: Classe unique (avec filtrage des classes dynamiques)
+  // PRIORITÉ 7: Classe unique (avec filtrage des classes dynamiques)
   if (element.className && typeof element.className === 'string') {
     const classes = element.className.trim().split(/\s+/).filter(c => c);
     if (classes.length > 0) {
-      // Filtrer les classes Angular dynamiques (états temporaires)
       const stableClasses = classes.filter(c => 
         c.length < 30 && 
         !/[{}()\[\];<>]/.test(c) &&
         !c.startsWith('ng-') &&
-        // Exclure les classes d'état Angular
         !c.includes('touched') &&
         !c.includes('untouched') &&
         !c.includes('pristine') &&
@@ -287,26 +283,22 @@ function getUniqueSelector(element) {
         !c.includes('selected')
       );
       
-      // Essayer avec les classes stables uniquement
       if (stableClasses.length > 0) {
         const classSelector = '.' + stableClasses.join('.');
         const matchingElements = document.querySelectorAll(classSelector);
         if (matchingElements.length === 1) {
           return classSelector;
         }
-        // Si plusieurs éléments, utiliser juste la première classe stable
-        if (stableClasses.length > 0) {
-          const firstClassSelector = '.' + stableClasses[0];
-          const firstClassElements = document.querySelectorAll(firstClassSelector);
-          if (firstClassElements.length === 1) {
-            return firstClassSelector;
-          }
+        const firstClassSelector = '.' + stableClasses[0];
+        const firstClassElements = document.querySelectorAll(firstClassSelector);
+        if (firstClassElements.length === 1) {
+          return firstClassSelector;
         }
       }
     }
   }
   
-  // PRIORITÉ 5: Attributs data-*
+  // PRIORITÉ 8: Attributs data-*
   for (const attr of element.attributes) {
     if (attr.name.startsWith('data-')) {
       const selector = `${element.tagName.toLowerCase()}[${attr.name}="${attr.value}"]`;
@@ -317,22 +309,13 @@ function getUniqueSelector(element) {
     }
   }
   
-  // PRIORITÉ 5: Attribut for pour les labels (seulement si valide)
-  if (element.tagName === 'LABEL' && element.htmlFor) {
-    if (!/[{}()\[\];<>]|function|return/.test(element.htmlFor)) {
-      return `label[for="${element.htmlFor}"]`;
-    } else {
-      console.log('⚠️ Label for invalide ignoré:', element.htmlFor.substring(0, 50) + '...');
-    }
-  }
-  
-  // PRIORITÉ 6: XPath comme dernier recours (plus robuste que nth-child)
+  // PRIORITÉ 9: XPath comme dernier recours
   const xpath = getOptimalXPath(element);
   if (xpath) {
     return xpath;
   }
   
-  // PRIORITÉ 7: Chemin complet avec nth-child (fallback final)
+  // PRIORITÉ 10: Chemin complet avec nth-child (fallback final)
   return getFullPath(element);
 }
 
@@ -346,26 +329,32 @@ function getXPathByText(element) {
   // Échapper les guillemets dans le texte
   const escapedText = text.replace(/"/g, '\\"');
   
-  // Pour les éléments avec texte exact
+  // Pour ng-option et span, utiliser contains(., "...") car ils ont des enfants span
+  if (tagName === 'ng-option' || tagName === 'span') {
+    return `xpath=//${tagName}[contains(., "${escapedText}")]`;
+  }
+  
+  // Pour les labels, utiliser contains aussi pour plus de robustesse
+  if (tagName === 'label') {
+    return `xpath=//${tagName}[contains(., "${escapedText}")]`;
+  }
+  
+  // Pour les autres éléments
   if (text.length < 50) {
     return `xpath=//${tagName}[normalize-space(text())="${escapedText}"]`;
   }
   
-  // Pour les textes plus longs, utiliser contains
   return `xpath=//${tagName}[contains(normalize-space(text()), "${escapedText.substring(0, 30)}")]`;
 }
 
 // Générer un XPath pour les éléments de ng-select (dropdowns Angular)
 function getXPathForNgSelectElement(element, ngSelect) {
-  // Trouver le label ou le contexte du ng-select
   const container = ngSelect.closest('lb-aon-select');
   if (container) {
-    // Chercher un label dans le container
     const label = container.querySelector('label');
     if (label && label.textContent) {
       const labelText = label.textContent.trim();
       if (labelText) {
-        // XPath relatif au label du champ
         if (element.classList.contains('ng-input') || element.closest('.ng-input')) {
           const escapedText = labelText.replace(/"/g, '\\"');
           return `xpath=//label[contains(text(), "${escapedText}")]/following::ng-select[1]//div[contains(@class, 'ng-input')]`;
@@ -373,7 +362,6 @@ function getXPathForNgSelectElement(element, ngSelect) {
       }
     }
     
-    // Fallback : utiliser la position du ng-select dans la page
     const allNgSelects = document.querySelectorAll('ng-select');
     const index = Array.from(allNgSelects).indexOf(ngSelect);
     if (index >= 0) {
@@ -390,21 +378,18 @@ function getXPathForNgSelectElement(element, ngSelect) {
 function getOptimalXPath(element) {
   const tagName = element.tagName.toLowerCase();
   
-  // Pour les éléments Angular spécifiques
   if (tagName === 'ng-option' || tagName === 'ng-select') {
     const text = element.textContent?.trim();
     if (text) {
       const escapedText = text.replace(/"/g, '\\"');
-      return `xpath=//${tagName}[contains(normalize-space(.), "${escapedText}")]`;
+      return `xpath=//${tagName}[contains(., "${escapedText}")]`;
     }
   }
   
-  // Pour les inputs avec ID stable
   if (element.id && element.id.length < 100 && !/[{}()\[\];<>]|function/.test(element.id)) {
     return `xpath=//${tagName}[@id="${element.id}"]`;
   }
   
-  // Pour les éléments avec classe stable
   if (element.className && typeof element.className === 'string') {
     const classes = element.className.trim().split(/\s+/).filter(c => c);
     const stableClasses = classes.filter(c => 
@@ -455,12 +440,17 @@ async function playScenario(actions) {
     const action = actions[i];
     
     if (action.delay > 0) {
-      await sleep(action.delay);
+      await sleep(Math.min(action.delay, 2000)); // Limiter les délais trop longs
     }
     
     try {
       await performAction(action);
       console.log(`✅ Action ${i + 1}/${actions.length} exécutée:`, action);
+      
+      // Attente supplémentaire après clic sur ng-select pour laisser le dropdown s'ouvrir
+      if (action.selector.includes('ng-select') || action.selector.includes('ng-input')) {
+        await sleep(500);
+      }
     } catch (error) {
       console.error(`❌ Erreur action ${i + 1}:`, error, action);
     }
@@ -542,13 +532,13 @@ function findElement(selector, actionText = '', elementType = '') {
   try {
     // SUPPORT XPATH
     if (selector.startsWith('xpath=')) {
-      const xpath = selector.substring(6); // Enlever 'xpath='
+      const xpath = selector.substring(6);
       const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
       if (result.singleNodeValue) {
+        console.log('✅ XPath trouvé:', xpath);
         return result.singleNodeValue;
       }
       console.warn('⚠️ XPath non trouvé:', xpath);
-      // Fallback sur recherche par texte
       if (actionText && elementType) {
         return findElementByText(elementType, actionText);
       }
@@ -624,13 +614,11 @@ function findElementByText(tagName, text) {
   
   const elements = document.querySelectorAll(tagName.toLowerCase());
   for (const el of elements) {
-    // Comparaison exacte du texte
     if (el.textContent.trim() === text) {
       return el;
     }
   }
   
-  // Si pas trouvé avec comparaison exacte, essayer avec includes
   for (const el of elements) {
     if (el.textContent.trim().includes(text)) {
       return el;
