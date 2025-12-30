@@ -471,7 +471,7 @@ async function playScenario(actions) {
 
 // Exécuter une action
 async function performAction(action) {
-  const element = findElement(action.selector, action.text, action.element);
+  const element = await findElement(action.selector, action.text, action.element);
   
   if (!element) {
     throw new Error(`Élément introuvable: ${action.selector}`);
@@ -537,17 +537,31 @@ async function performAction(action) {
 }
 
 // Trouver un élément avec fallback (support XPath)
-function findElement(selector, actionText = '', elementType = '') {
+async function findElement(selector, actionText = '', elementType = '') {
   try {
     // SUPPORT XPATH
     if (selector.startsWith('xpath=')) {
       const xpath = selector.substring(6);
-      const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-      if (result.singleNodeValue) {
-        console.log('✅ XPath trouvé:', xpath);
-        return result.singleNodeValue;
+      
+      // Stratégie de retry pour les éléments Angular qui mettent du temps à apparaître
+      const maxRetries = 5;
+      const retryDelay = 500;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        if (result.singleNodeValue) {
+          console.log(`✅ XPath trouvé (tentative ${attempt}/${maxRetries}):`, xpath);
+          return result.singleNodeValue;
+        }
+        
+        // Si pas trouvé et qu'il reste des tentatives, attendre avant de réessayer
+        if (attempt < maxRetries) {
+          console.log(`⏳ XPath non trouvé, réessai ${attempt}/${maxRetries}...`);
+          await sleep(retryDelay);
+        }
       }
-      console.warn('⚠️ XPath non trouvé:', xpath);
+      
+      console.warn('⚠️ XPath non trouvé après', maxRetries, 'tentatives:', xpath);
       if (actionText && elementType) {
         return findElementByText(elementType, actionText);
       }
