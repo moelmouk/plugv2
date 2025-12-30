@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Action Recorder & Player</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 Action Recorder</h1>
+    
+    <!-- Section d'enregistrement -->
+    <div class="section">
+      <h2>Enregistrement</h2>
+      <div class="controls">
+        <button id="startRecording" class="btn btn-primary">
+          ⏺️ Démarrer l'enregistrement
+        </button>
+        <button id="stopRecording" class="btn btn-danger" disabled>
+          ⏹️ Arrêter l'enregistrement
+        </button>
+      </div>
+      <div id="recordingStatus" class="status"></div>
+      <div id="actionCounter" class="counter">Actions: 0</div>
+      
+      <!-- Formulaire pour sauvegarder le scénario -->
+      <div id="saveScenarioForm" class="save-form hidden">
+        <input type="text" id="scenarioName" placeholder="Nom du scénario" class="input">
+        <button id="saveScenario" class="btn btn-success">💾 Sauvegarder</button>
+        <button id="cancelSave" class="btn btn-secondary">❌ Annuler</button>
+      </div>
+    </div>
+
+    <!-- Section des scénarios -->
+    <div class="section">
+      <h2>Scénarios enregistrés</h2>
+      <div id="scenariosList" class="scenarios-list"></div>
+    </div>
+
+    <!-- Section d'export/import -->
+    <div class="section">
+      <h2>Import/Export</h2>
+      <div class="controls">
+        <button id="exportScenario" class="btn btn-secondary">
+          📤 Exporter
+        </button>
+        <button id="importScenario" class="btn btn-secondary">
+          📥 Importer
+        </button>
+      </div>
+      <input type="file" id="importFile" accept=".json" class="hidden">
+    </div>
+  </div>
+
+  <!-- Modal pour éditer un scénario -->
+  <div id="editModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Éditer le scénario</h2>
+        <button id="closeModal" class="btn-close">✖</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="editScenarioName" class="input" placeholder="Nom du scénario">
+        <div id="actionsList" class="actions-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="saveEdit" class="btn btn-primary">💾 Sauvegarder</button>
+        <button id="cancelEdit" class="btn btn-secondary">❌ Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
