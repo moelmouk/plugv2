@@ -1,43 +1,66 @@
-# TODO - Fix Selector Errors in Action Recorder Plugin
+# TODO - Action Recorder Plugin
 
-## Problem Analysis
-The errors show that element IDs contain JavaScript function code (from Angular/React frameworks) which breaks CSS selector parsing:
-- Example problematic ID: `input_function r(){if(St(n),n.value===mo){let o=null;throw new C(-950,o)}return n.value}_subscriber-type_aon-choice_0`
+## ✅ Corrections Appliquées
 
-## Plan
-1. ✅ Create this TODO file
-2. ✅ Add `isValidCssSelector()` function to validate if a string is a valid CSS selector
-3. ✅ Add `escapeCssSelector()` function to properly escape problematic selectors
-4. ✅ Modify `getUniqueSelector()` to validate and escape IDs before using them
-5. ✅ Add robust fallback mechanism for dynamic IDs
-6. ✅ Test the fix
+### 1. Amélioration de la détection des IDs invalides
+- ✅ Ajout de validation stricte pour bloquer les IDs générés dynamiquement
+- ✅ Détection des mots-clés JavaScript (function, return, throw, let, const, var, if, else)
+- ✅ Détection des caractères invalides ({, }, (, ), [, ], ;, <, >)
+- ✅ Limitation de la longueur des IDs (max 50 caractères)
 
-## Changes Made in content.js
-- Added `isValidCssSelector()` - validates CSS selectors before using them
-- Added `escapeCssSelector()` - escapes problematic characters in selectors
-- Modified `getUniqueSelector()` to:
-  - Validate ID as CSS selector before using it
-  - Skip IDs containing JS code (`{}()[];<>`)
-  - Filter out Angular dynamic classes (ng-*)
-  - Added priority for radio/checkbox with type+name selector
-  - Added fallback for labels using `for` attribute
-  - Added fallback using element text content for labels/options
-- Improved `findElement()` with multiple fallback strategies:
-  - Support for `:contains()` pseudo-selector
-  - Direct ID lookup fallback
-  - Label lookup by `for` attribute
-  - Radio/checkbox lookup by name attribute
+### 2. Réorganisation des priorités pour les sélecteurs
+- ✅ **PRIORITÉ 1**: Radio/Checkbox avec name + type + value (évite les IDs dynamiques)
+- ✅ **PRIORITÉ 2**: Name pour les autres inputs
+- ✅ **PRIORITÉ 3**: ID avec validation stricte
+- ✅ **PRIORITÉ 4**: Attributs data-*
+- ✅ **PRIORITÉ 5**: Attribut for pour les labels
+- ✅ **PRIORITÉ 6**: Texte de l'élément
+- ✅ **PRIORITÉ 7**: Chemin complet avec nth-child
 
-## What the Fix Does
-1. When recording an action, the plugin now checks if the element's ID is a valid CSS selector
-2. If the ID contains JavaScript code (like `{}()[];<>), it skips using the ID and falls back to other selectors
-3. For radio/checkbox elements, it prioritizes `input[type="radio"][name="x"]` style selectors
-4. Dynamic Angular classes (ng-*) are filtered out when generating stable selectors
-5. The `findElement()` function now has multiple fallbacks to locate elements when the primary selector fails
+### 3. Amélioration de findElement() pour les radio buttons
+- ✅ Détection spéciale des sélecteurs invalides (IDs avec code JS)
+- ✅ Fallback amélioré pour les radio/checkbox avec value
+- ✅ Recherche par name + type + value pour identifier le bon radio
+- ✅ Messages d'avertissement clairs pour les sélecteurs invalides
 
-## Testing
-To test the fix:
-1. Reload the extension in Chrome (chrome://extensions → Reload)
-2. Record a new scenario on the problematic page
-3. Play back the scenario to verify all actions execute correctly
+### 4. Logging amélioré
+- ✅ Ajout de warnings pour les IDs dynamiques ignorés
+- ✅ Messages d'erreur plus clairs avec emoji
+- ✅ Affichage des sélecteurs invalides détectés
 
+## 🎯 Résultat Attendu
+
+Les erreurs suivantes ne devraient plus apparaître :
+```
+❌ Erreur sélecteur: #radio-input_function r(){if(St(n),n.value===mo){let o=null;throw new C(-950,o)}return n.value}_subscriber-type_aon-choice_0
+```
+
+À la place, le plugin devrait :
+1. Ignorer les IDs générés dynamiquement lors de l'enregistrement
+2. Utiliser `input[type="radio"][name="subscriber-type"][value="aon-choice"]` à la place
+3. Retrouver correctement les éléments lors de la lecture du scénario
+
+## 📝 Tests à Effectuer
+
+1. **Test d'enregistrement sur le site Angular**
+   - [ ] Démarrer un nouvel enregistrement
+   - [ ] Cliquer sur des boutons radio
+   - [ ] Vérifier dans la console que les IDs dynamiques sont ignorés
+   - [ ] Vérifier que les sélecteurs enregistrés utilisent name + type + value
+
+2. **Test de lecture**
+   - [ ] Charger un scénario enregistré
+   - [ ] Vérifier que les éléments radio sont correctement trouvés
+   - [ ] Vérifier qu'il n'y a plus d'erreurs "Élément introuvable"
+
+3. **Test avec anciens enregistrements**
+   - [ ] Charger un ancien scénario avec des IDs invalides
+   - [ ] Vérifier que les warnings s'affichent
+   - [ ] Vérifier que le plugin continue malgré les erreurs
+
+## 🔄 Prochaines Améliorations Possibles
+
+- [ ] Ajouter un système de migration pour nettoyer les anciens scénarios
+- [ ] Améliorer la détection des éléments par leur label associé
+- [ ] Ajouter une option pour ré-enregistrer les actions problématiques
+- [ ] Créer un rapport de santé des scénarios enregistrés

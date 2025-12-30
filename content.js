@@ -241,33 +241,44 @@ function escapeCssSelector(input) {
 
 // Obtenir un sélecteur unique pour un élément
 function getUniqueSelector(element) {
-  // Priorité 1: ID (avec validation)
-  if (element.id) {
-    const idSelector = `#${element.id}`;
-    
-    // Vérifier si l'ID est un sélecteur CSS valide (ne contient pas de caractères problématiques)
-    if (isValidCssSelector(idSelector)) {
-      return idSelector;
-    }
-    
-    // Si l'ID n'est pas un sélecteur CSS valide, vérifier si l'élément existe avec cet ID
-    // Certains navigateurs/DOM peuvent avoir des IDs avec des caractères spéciaux qui fonctionnent
-    const elementWithId = document.getElementById(element.id);
-    if (elementWithId) {
-      return idSelector;
-    }
-    
-    // Si l'ID contient trop de caractères problématiques, ignorer et passer aux autres méthodes
-    // Les IDs générés par Angular/React contiennent souvent du code JS
-    if (element.id.length > 50 || /[{}()\[\];<>]/.test(element.id)) {
-      console.log('ID ignoré (probablement généré dynamiquement):', element.id.substring(0, 50) + '...');
+  // PRIORITÉ 1: Pour les radio/checkbox, TOUJOURS utiliser name + type + value
+  // Ceci évite les IDs générés dynamiquement par Angular/React
+  if (element.type && ['radio', 'checkbox'].includes(element.type)) {
+    if (element.name) {
+      const tagName = element.tagName.toLowerCase();
+      // Pour les radio, inclure la valeur pour identifier le bouton spécifique
+      if (element.type === 'radio' && element.value) {
+        return `${tagName}[type="${element.type}"][name="${element.name}"][value="${element.value}"]`;
+      }
+      // Pour les checkbox, name + type suffit généralement
+      return `${tagName}[type="${element.type}"][name="${element.name}"]`;
     }
   }
   
-  // Priorité 2: Name (pour les inputs)
-  if (element.name) {
+  // PRIORITÉ 2: Name (pour les autres inputs)
+  if (element.name && element.tagName === 'INPUT') {
     const tagName = element.tagName.toLowerCase();
     return `${tagName}[name="${element.name}"]`;
+  }
+  
+  // PRIORITÉ 3: ID (avec validation STRICTE)
+  if (element.id) {
+    // Bloquer complètement les IDs qui ressemblent à du code généré dynamiquement
+    const hasInvalidChars = /[{}()\[\];<>]/.test(element.id);
+    const hasJsKeywords = /function|return|throw|let|const|var|if|else/.test(element.id);
+    const isTooLong = element.id.length > 50;
+    
+    // Si l'ID semble valide et stable
+    if (!hasInvalidChars && !hasJsKeywords && !isTooLong) {
+      const idSelector = `#${element.id}`;
+      
+      // Vérifier si c'est un sélecteur CSS valide
+      if (isValidCssSelector(idSelector)) {
+        return idSelector;
+      }
+    } else {
+      console.log('⚠️ ID dynamique ignoré:', element.id.substring(0, 50) + '...');
+    }
   }
   
   // Priorité 3: Classe unique (avec filtrage des classes dynamiques)
@@ -299,7 +310,7 @@ function getUniqueSelector(element) {
     }
   }
   
-  // Priorité 4: Attributs data-*
+  // PRIORITÉ 4: Attributs data-*
   for (const attr of element.attributes) {
     if (attr.name.startsWith('data-')) {
       const selector = `${element.tagName.toLowerCase()}[${attr.name}="${attr.value}"]`;
@@ -310,24 +321,12 @@ function getUniqueSelector(element) {
     }
   }
   
-  // Priorité 5: Attribut type + name pour les inputs radio/checkbox
-  if (element.type && element.name && ['radio', 'checkbox'].includes(element.type)) {
-    // Utiliser le sélecteur name + type (plus stable que l'ID)
-    return `${element.tagName.toLowerCase()}[type="${element.type}"][name="${element.name}"]`;
-  }
-  
-  // Priorité 6: Chercher un ID qui ne contient pas de code JS (format stable)
-  if (element.id && !/[{}()\[\];<>]/.test(element.id) && element.id.length < 100) {
-    // Les IDs normaux (sans caractères spéciaux) sont OK
-    return `#${element.id}`;
-  }
-  
-  // Priorité 7: Attribut for pour les labels
+  // PRIORITÉ 5: Attribut for pour les labels
   if (element.tagName === 'LABEL' && element.htmlFor) {
     return `label[for="${element.htmlFor}"]`;
   }
   
-  // Priorité 8: Texte de l'élément pour les labels/options
+  // PRIORITÉ 6: Texte de l'élément pour les labels/options
   if ((element.tagName === 'LABEL' || element.tagName === 'NG-OPTION') && element.textContent?.trim()) {
     const text = element.textContent.trim();
     // Échapper les guillemets dans le texte
@@ -335,7 +334,7 @@ function getUniqueSelector(element) {
     return `${element.tagName.toLowerCase()}:contains("${escapedText}")`;
   }
   
-  // Priorité 9: Chemin complet avec nth-child (amélioré)
+  // PRIORITÉ 7: Chemin complet avec nth-child (amélioré)
   return getFullPath(element);
 }
 
@@ -459,6 +458,14 @@ async function performAction(action) {
 // Trouver un élément avec fallback
 function findElement(selector) {
   try {
+    // DÉTECTION SPÉCIALE: Si le sélecteur contient du code JS (ID invalide)
+    // Cela arrive quand un ancien enregistrement a capturé un mauvais ID
+    if (selector.startsWith('#') && /[{}()\[\];<>]|function|return/.test(selector)) {
+      console.warn('⚠️ Sélecteur invalide détecté (ID dynamique):', selector.substring(0, 50) + '...');
+      // Ne pas essayer d'utiliser ce sélecteur, retourner null
+      return null;
+    }
+    
     // Si le sélecteur contient :contains (non natif en CSS), utiliser une recherche par texte
     if (selector.includes(':contains(')) {
       const match = selector.match(/(\w+):contains\("([^"]+)"\)/);
@@ -478,14 +485,37 @@ function findElement(selector) {
     let element = document.querySelector(selector);
     if (element) return element;
     
-    // Fallback 1: Si le sélecteur est un ID avec caractères échappés
-    if (selector.startsWith('#')) {
+    // Fallback 1: Pour les radio/checkbox avec value
+    if (selector.includes('[type="radio"]') || selector.includes('[type="checkbox"]')) {
+      const nameMatch = selector.match(/\[name="([^"]+)"\]/);
+      const valueMatch = selector.match(/\[value="([^"]+)"\]/);
+      const typeMatch = selector.match(/\[type="([^"]+)"\]/);
+      
+      if (nameMatch && typeMatch) {
+        const name = nameMatch[1];
+        const type = typeMatch[1];
+        const value = valueMatch ? valueMatch[1] : null;
+        
+        // Si on a une valeur, chercher le radio spécifique
+        if (value) {
+          element = document.querySelector(`input[type="${type}"][name="${name}"][value="${value}"]`);
+          if (element) return element;
+        }
+        
+        // Sinon, retourner le premier élément avec ce name
+        const elements = document.querySelectorAll(`input[type="${type}"][name="${name}"]`);
+        if (elements.length > 0) return elements[0];
+      }
+    }
+    
+    // Fallback 2: Si le sélecteur est un ID (mais pas invalide)
+    if (selector.startsWith('#') && !/[{}()\[\];<>]/.test(selector)) {
       const id = selector.substring(1);
       element = document.getElementById(id);
       if (element) return element;
     }
     
-    // Fallback 2: Essayer de trouver par texte pour les labels
+    // Fallback 3: Essayer de trouver par texte pour les labels
     if (selector.startsWith('label')) {
       const textMatch = selector.match(/label\[for="([^"]+)"\]/);
       if (textMatch) {
@@ -500,28 +530,16 @@ function findElement(selector) {
       }
     }
     
-    // Fallback 3: nth-of-type
+    // Fallback 4: nth-of-type
     if (selector.includes(':nth-of-type')) {
       const baseSelector = selector.split(':nth-of-type')[0].trim();
       const elements = document.querySelectorAll(baseSelector);
       if (elements.length > 0) return elements[0];
     }
     
-    // Fallback 4: Pour les radio/checkbox, essayer de trouver par name
-    if (selector.includes('[type="radio"]') || selector.includes('[type="checkbox"]')) {
-      const nameMatch = selector.match(/\[name="([^"]+)"\]/);
-      if (nameMatch) {
-        const name = nameMatch[1];
-        const typeMatch = selector.match(/\[type="([^"]+)"\]/);
-        const type = typeMatch ? typeMatch[1] : 'radio';
-        const elements = document.querySelectorAll(`input[type="${type}"][name="${name}"]`);
-        if (elements.length > 0) return elements[0];
-      }
-    }
-    
     return null;
   } catch (error) {
-    console.error('Erreur sélecteur:', selector, error);
+    console.error('❌ Erreur sélecteur:', selector, error);
     return null;
   }
 }
