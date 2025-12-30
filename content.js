@@ -190,9 +190,9 @@ function isValidCssSelector(selector) {
   }
 }
 
-// Obtenir un sélecteur unique pour un élément
+// Obtenir un sélecteur unique pour un élément (avec XPath pour Angular)
 function getUniqueSelector(element) {
-  // PRIORITÉ 1: Pour les radio/checkbox, TOUJOURS utiliser name + type + value
+  // PRIORITÉ 1: Pour les radio/checkbox, utiliser name + type + value
   if (element.type && ['radio', 'checkbox'].includes(element.type)) {
     if (element.name) {
       const tagName = element.tagName.toLowerCase();
@@ -222,6 +222,18 @@ function getUniqueSelector(element) {
       }
     } else {
       console.log('⚠️ ID dynamique ignoré:', element.id.substring(0, 50) + '...');
+    }
+  }
+  
+  // PRIORITÉ 4: XPath pour éléments Angular avec texte
+  if (['NG-OPTION', 'LABEL', 'SPAN', 'BUTTON'].includes(element.tagName)) {
+    const text = element.textContent?.trim();
+    if (text && text.length > 0 && text.length < 100) {
+      // Générer un XPath basé sur le texte
+      const xpath = getXPathByText(element);
+      if (xpath) {
+        return xpath;
+      }
     }
   }
   
@@ -281,14 +293,7 @@ function getUniqueSelector(element) {
     }
   }
   
-  // PRIORITÉ 6: Pour ng-option et labels, utiliser le chemin + texte
-  // On stocke le texte dans l'action pour pouvoir le retrouver
-  if (element.tagName === 'NG-OPTION' || element.tagName === 'LABEL') {
-    // Utiliser le chemin complet comme sélecteur de base
-    return getFullPath(element);
-  }
-  
-  // PRIORITÉ 7: Attribut for pour les labels (seulement si valide)
+  // PRIORITÉ 5: Attribut for pour les labels (seulement si valide)
   if (element.tagName === 'LABEL' && element.htmlFor) {
     if (!/[{}()\[\];<>]|function|return/.test(element.htmlFor)) {
       return `label[for="${element.htmlFor}"]`;
@@ -297,8 +302,72 @@ function getUniqueSelector(element) {
     }
   }
   
-  // PRIORITÉ 8: Chemin complet avec nth-child
+  // PRIORITÉ 6: XPath comme dernier recours (plus robuste que nth-child)
+  const xpath = getOptimalXPath(element);
+  if (xpath) {
+    return xpath;
+  }
+  
+  // PRIORITÉ 7: Chemin complet avec nth-child (fallback final)
   return getFullPath(element);
+}
+
+// Générer un XPath basé sur le texte de l'élément
+function getXPathByText(element) {
+  const tagName = element.tagName.toLowerCase();
+  const text = element.textContent?.trim();
+  
+  if (!text) return null;
+  
+  // Échapper les guillemets dans le texte
+  const escapedText = text.replace(/"/g, '\\"');
+  
+  // Pour les éléments avec texte exact
+  if (text.length < 50) {
+    return `xpath=//${tagName}[normalize-space(text())="${escapedText}"]`;
+  }
+  
+  // Pour les textes plus longs, utiliser contains
+  return `xpath=//${tagName}[contains(normalize-space(text()), "${escapedText.substring(0, 30)}")]`;
+}
+
+// Générer un XPath optimal pour l'élément
+function getOptimalXPath(element) {
+  const tagName = element.tagName.toLowerCase();
+  
+  // Pour les éléments Angular spécifiques
+  if (tagName === 'ng-option' || tagName === 'ng-select') {
+    const text = element.textContent?.trim();
+    if (text) {
+      const escapedText = text.replace(/"/g, '\\"');
+      return `xpath=//${tagName}[contains(normalize-space(.), "${escapedText}")]`;
+    }
+  }
+  
+  // Pour les inputs avec ID stable
+  if (element.id && element.id.length < 100 && !/[{}()\[\];<>]|function/.test(element.id)) {
+    return `xpath=//${tagName}[@id="${element.id}"]`;
+  }
+  
+  // Pour les éléments avec classe stable
+  if (element.className && typeof element.className === 'string') {
+    const classes = element.className.trim().split(/\s+/).filter(c => c);
+    const stableClasses = classes.filter(c => 
+      c.length < 30 && 
+      !/[{}()\[\];<>]/.test(c) &&
+      !c.startsWith('ng-') &&
+      !c.includes('touched') &&
+      !c.includes('pristine') &&
+      !c.includes('focused') &&
+      !c.includes('opened')
+    );
+    
+    if (stableClasses.length > 0) {
+      return `xpath=//${tagName}[contains(@class, "${stableClasses[0]}")]`;
+    }
+  }
+  
+  return null;
 }
 
 // Obtenir le chemin complet d'un élément
@@ -413,13 +482,27 @@ async function performAction(action) {
   await sleep(200);
 }
 
-// Trouver un élément avec fallback
+// Trouver un élément avec fallback (support XPath)
 function findElement(selector, actionText = '', elementType = '') {
   try {
+    // SUPPORT XPATH
+    if (selector.startsWith('xpath=')) {
+      const xpath = selector.substring(6); // Enlever 'xpath='
+      const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      if (result.singleNodeValue) {
+        return result.singleNodeValue;
+      }
+      console.warn('⚠️ XPath non trouvé:', xpath);
+      // Fallback sur recherche par texte
+      if (actionText && elementType) {
+        return findElementByText(elementType, actionText);
+      }
+      return null;
+    }
+    
     // DÉTECTION: Sélecteurs invalides
     if (selector.startsWith('#') && /[{}()\[\];<>]|function|return/.test(selector)) {
       console.warn('⚠️ Sélecteur invalide (ID dynamique):', selector.substring(0, 50) + '...');
-      // Essayer de trouver par texte si disponible
       if (actionText && elementType) {
         return findElementByText(elementType, actionText);
       }
@@ -435,15 +518,7 @@ function findElement(selector, actionText = '', elementType = '') {
       return null;
     }
     
-    // DÉTECTION: Sélecteurs avec attributs data personnalisés (anciens enregistrements)
-    if (selector.includes('[data-option-text=') || selector.includes('[data-label-text=')) {
-      console.warn('⚠️ Sélecteur avec attribut data personnalisé détecté');
-      if (actionText && elementType) {
-        return findElementByText(elementType, actionText);
-      }
-    }
-    
-    // Essayer le sélecteur direct
+    // Essayer le sélecteur CSS direct
     let element = document.querySelector(selector);
     if (element) return element;
     
