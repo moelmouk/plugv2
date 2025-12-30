@@ -439,20 +439,29 @@ async function playScenario(actions) {
   for (let i = 0; i < actions.length; i++) {
     const action = actions[i];
     
+    // Attendre le délai entre actions (limité à 2 secondes max)
     if (action.delay > 0) {
-      await sleep(Math.min(action.delay, 2000)); // Limiter les délais trop longs
+      await sleep(Math.min(action.delay, 2000));
+    }
+    
+    // Attente AVANT l'action si c'est un ng-option ou span (pour laisser le dropdown s'ouvrir)
+    if (action.element === 'NG-OPTION' || (action.element === 'SPAN' && action.selector.includes('xpath='))) {
+      console.log('⏳ Attente pour dropdown Angular...');
+      await sleep(800); // Attente plus longue pour que le dropdown soit complètement chargé
     }
     
     try {
       await performAction(action);
       console.log(`✅ Action ${i + 1}/${actions.length} exécutée:`, action);
       
-      // Attente supplémentaire après clic sur ng-select pour laisser le dropdown s'ouvrir
+      // Attente APRÈS avoir cliqué sur ng-select pour laisser le dropdown s'ouvrir
       if (action.selector.includes('ng-select') || action.selector.includes('ng-input')) {
-        await sleep(500);
+        console.log('⏳ Attente après ouverture dropdown...');
+        await sleep(800);
       }
     } catch (error) {
       console.error(`❌ Erreur action ${i + 1}:`, error, action);
+      // Continuer malgré l'erreur
     }
   }
   
