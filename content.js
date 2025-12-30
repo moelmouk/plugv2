@@ -225,14 +225,38 @@ function getUniqueSelector(element) {
     }
   }
   
-  // PRIORITÉ 4: XPath pour éléments Angular avec texte
+  // PRIORITÉ 4: XPath pour éléments Angular
+  // Pour les éléments avec texte
   if (['NG-OPTION', 'LABEL', 'SPAN', 'BUTTON'].includes(element.tagName)) {
     const text = element.textContent?.trim();
     if (text && text.length > 0 && text.length < 100) {
-      // Générer un XPath basé sur le texte
       const xpath = getXPathByText(element);
       if (xpath) {
         return xpath;
+      }
+    }
+  }
+  
+  // Pour les DIV dans ng-select (dropdowns Angular)
+  if (element.tagName === 'DIV') {
+    const ngSelect = element.closest('ng-select');
+    if (ngSelect) {
+      // C'est un élément de dropdown Angular
+      const xpath = getXPathForNgSelectElement(element, ngSelect);
+      if (xpath) {
+        return xpath;
+      }
+    }
+  }
+  
+  // Pour les INPUT radio/checkbox avec label associé
+  if (element.tagName === 'INPUT' && ['radio', 'checkbox'].includes(element.type)) {
+    const label = element.nextElementSibling;
+    if (label && label.tagName === 'LABEL') {
+      const labelText = label.textContent?.trim();
+      if (labelText) {
+        const escapedText = labelText.replace(/"/g, '\\"');
+        return `xpath=//label[normalize-space(text())="${escapedText}"]/preceding-sibling::input[@type="${element.type}"]`;
       }
     }
   }
@@ -329,6 +353,37 @@ function getXPathByText(element) {
   
   // Pour les textes plus longs, utiliser contains
   return `xpath=//${tagName}[contains(normalize-space(text()), "${escapedText.substring(0, 30)}")]`;
+}
+
+// Générer un XPath pour les éléments de ng-select (dropdowns Angular)
+function getXPathForNgSelectElement(element, ngSelect) {
+  // Trouver le label ou le contexte du ng-select
+  const container = ngSelect.closest('lb-aon-select');
+  if (container) {
+    // Chercher un label dans le container
+    const label = container.querySelector('label');
+    if (label && label.textContent) {
+      const labelText = label.textContent.trim();
+      if (labelText) {
+        // XPath relatif au label du champ
+        if (element.classList.contains('ng-input') || element.closest('.ng-input')) {
+          const escapedText = labelText.replace(/"/g, '\\"');
+          return `xpath=//label[contains(text(), "${escapedText}")]/following::ng-select[1]//div[contains(@class, 'ng-input')]`;
+        }
+      }
+    }
+    
+    // Fallback : utiliser la position du ng-select dans la page
+    const allNgSelects = document.querySelectorAll('ng-select');
+    const index = Array.from(allNgSelects).indexOf(ngSelect);
+    if (index >= 0) {
+      if (element.classList.contains('ng-input') || element.closest('.ng-input')) {
+        return `xpath=(//ng-select)[${index + 1}]//div[contains(@class, 'ng-input')]`;
+      }
+    }
+  }
+  
+  return null;
 }
 
 // Générer un XPath optimal pour l'élément
