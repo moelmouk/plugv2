@@ -200,7 +200,6 @@ function escapeCssSelector(input) {
   }
   
   // Fallback: échapper manuellement les caractères problématiques
-  // Caractères qui doivent être échappés en CSS: !"#$%&'()*+,./:;<=>?@[\]^`{|}~
   const escapeMap = {
     '\\': '\\\\',
     '"': '\\"',
@@ -281,7 +280,7 @@ function getUniqueSelector(element) {
     }
   }
   
-  // Priorité 3: Classe unique (avec filtrage des classes dynamiques)
+  // PRIORITÉ 4: Classe unique (avec filtrage des classes dynamiques)
   if (element.className && typeof element.className === 'string') {
     const classes = element.className.trim().split(/\s+/).filter(c => c);
     if (classes.length > 0) {
@@ -310,7 +309,7 @@ function getUniqueSelector(element) {
     }
   }
   
-  // PRIORITÉ 4: Attributs data-*
+  // PRIORITÉ 5: Attributs data-*
   for (const attr of element.attributes) {
     if (attr.name.startsWith('data-')) {
       const selector = `${element.tagName.toLowerCase()}[${attr.name}="${attr.value}"]`;
@@ -321,20 +320,37 @@ function getUniqueSelector(element) {
     }
   }
   
-  // PRIORITÉ 5: Attribut for pour les labels
+  // PRIORITÉ 6: Pour les éléments Angular ng-option, stocker le texte comme attribut
+  if (element.tagName === 'NG-OPTION') {
+    const text = element.textContent?.trim();
+    if (text) {
+      // Stocker le texte comme attribut data pour pouvoir le retrouver
+      const dataAttr = `data-option-text`;
+      element.setAttribute(dataAttr, text);
+      return `ng-option[${dataAttr}="${text}"]`;
+    }
+  }
+  
+  // PRIORITÉ 7: Attribut for pour les labels (seulement si valide)
   if (element.tagName === 'LABEL' && element.htmlFor) {
-    return `label[for="${element.htmlFor}"]`;
+    // Vérifier si le htmlFor contient du code JS invalide
+    if (!/[{}()\[\];<>]|function|return/.test(element.htmlFor)) {
+      return `label[for="${element.htmlFor}"]`;
+    } else {
+      console.log('⚠️ Label for invalide ignoré:', element.htmlFor.substring(0, 50) + '...');
+    }
   }
   
-  // PRIORITÉ 6: Texte de l'élément pour les labels/options
-  if ((element.tagName === 'LABEL' || element.tagName === 'NG-OPTION') && element.textContent?.trim()) {
+  // PRIORITÉ 8: Pour les labels sans attribut for valide, utiliser le texte avec un attribut data
+  if (element.tagName === 'LABEL' && element.textContent?.trim()) {
     const text = element.textContent.trim();
-    // Échapper les guillemets dans le texte
-    const escapedText = text.replace(/"/g, '\\"');
-    return `${element.tagName.toLowerCase()}:contains("${escapedText}")`;
+    // Stocker le texte comme attribut data
+    const dataAttr = `data-label-text`;
+    element.setAttribute(dataAttr, text);
+    return `label[${dataAttr}="${text}"]`;
   }
   
-  // PRIORITÉ 7: Chemin complet avec nth-child (amélioré)
+  // PRIORITÉ 9: Chemin complet avec nth-child (amélioré)
   return getFullPath(element);
 }
 
@@ -387,7 +403,7 @@ async function playScenario(actions) {
 
 // Exécuter une action
 async function performAction(action) {
-  const element = findElement(action.selector);
+  const element = findElement(action.selector, action.text);
   
   if (!element) {
     throw new Error(`Élément introuvable: ${action.selector}`);
@@ -456,19 +472,32 @@ async function performAction(action) {
 }
 
 // Trouver un élément avec fallback
-function findElement(selector) {
+function findElement(selector, actionText = '') {
   try {
     // DÉTECTION SPÉCIALE: Si le sélecteur contient du code JS (ID invalide)
-    // Cela arrive quand un ancien enregistrement a capturé un mauvais ID
     if (selector.startsWith('#') && /[{}()\[\];<>]|function|return/.test(selector)) {
       console.warn('⚠️ Sélecteur invalide détecté (ID dynamique):', selector.substring(0, 50) + '...');
-      // Ne pas essayer d'utiliser ce sélecteur, retourner null
       return null;
     }
     
-    // Si le sélecteur contient :contains (non natif en CSS), utiliser une recherche par texte
+    // DÉTECTION SPÉCIALE: Labels avec attribut for invalide
+    if (selector.startsWith('label[for=') && /[{}()\[\];<>]|function|return/.test(selector)) {
+      console.warn('⚠️ Label avec for invalide:', selector.substring(0, 50) + '...');
+      // Essayer de trouver par le texte de l'action
+      if (actionText) {
+        const labels = document.querySelectorAll('label');
+        for (const label of labels) {
+          if (label.textContent.trim() === actionText) {
+            return label;
+          }
+        }
+      }
+      return null;
+    }
+    
+    // DÉTECTION SPÉCIALE: Si le sélecteur contient :contains (non natif en CSS)
     if (selector.includes(':contains(')) {
-      const match = selector.match(/(\w+):contains\("([^"]+)"\)/);
+      const match = selector.match(/([\w-]+):contains\("([^"]+)"\)/);
       if (match) {
         const tagName = match[1].toLowerCase();
         const text = match[2];
@@ -479,6 +508,8 @@ function findElement(selector) {
           }
         }
       }
+      console.warn('⚠️ Élément avec :contains() non trouvé:', selector);
+      return null;
     }
     
     // Essayer le sélecteur direct
@@ -508,29 +539,59 @@ function findElement(selector) {
       }
     }
     
-    // Fallback 2: Si le sélecteur est un ID (mais pas invalide)
-    if (selector.startsWith('#') && !/[{}()\[\];<>]/.test(selector)) {
-      const id = selector.substring(1);
-      element = document.getElementById(id);
-      if (element) return element;
+    // Fallback 2: Pour les ng-option, chercher par attribut data-option-text
+    if (selector.includes('ng-option[data-option-text=')) {
+      const textMatch = selector.match(/ng-option\[data-option-text="([^"]+)"\]/);
+      if (textMatch) {
+        const text = textMatch[1];
+        const options = document.querySelectorAll('ng-option');
+        for (const option of options) {
+          if (option.textContent.trim() === text) {
+            return option;
+          }
+        }
+      }
     }
     
-    // Fallback 3: Essayer de trouver par texte pour les labels
-    if (selector.startsWith('label')) {
-      const textMatch = selector.match(/label\[for="([^"]+)"\]/);
+    // Fallback 3: Pour les labels, chercher par attribut data-label-text
+    if (selector.includes('label[data-label-text=')) {
+      const textMatch = selector.match(/label\[data-label-text="([^"]+)"\]/);
       if (textMatch) {
-        const forAttr = textMatch[1];
-        // Trouver le label avec cet attribut for
+        const text = textMatch[1];
         const labels = document.querySelectorAll('label');
         for (const label of labels) {
-          if (label.htmlFor === forAttr) {
+          if (label.textContent.trim() === text) {
             return label;
           }
         }
       }
     }
     
-    // Fallback 4: nth-of-type
+    // Fallback 4: Si le sélecteur est un ID (mais pas invalide)
+    if (selector.startsWith('#') && !/[{}()\[\];<>]/.test(selector)) {
+      const id = selector.substring(1);
+      element = document.getElementById(id);
+      if (element) return element;
+    }
+    
+    // Fallback 5: Essayer de trouver par texte pour les labels avec for valide
+    if (selector.startsWith('label[for=')) {
+      const textMatch = selector.match(/label\[for="([^"]+)"\]/);
+      if (textMatch) {
+        const forAttr = textMatch[1];
+        // Vérifier si le for est valide (pas de code JS)
+        if (!/[{}()\[\];<>]|function|return/.test(forAttr)) {
+          const labels = document.querySelectorAll('label');
+          for (const label of labels) {
+            if (label.htmlFor === forAttr) {
+              return label;
+            }
+          }
+        }
+      }
+    }
+    
+    // Fallback 6: nth-of-type
     if (selector.includes(':nth-of-type')) {
       const baseSelector = selector.split(':nth-of-type')[0].trim();
       const elements = document.querySelectorAll(baseSelector);
