@@ -180,11 +180,88 @@ function calculateDelay() {
   return Date.now() - lastActionTime;
 }
 
+// Vérifier si un sélecteur CSS est valide
+function isValidCssSelector(selector) {
+  try {
+    document.createDocumentFragment().querySelector(selector);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Échapper les caractères problématiques pour les sélecteurs CSS
+function escapeCssSelector(input) {
+  if (!input || typeof input !== 'string') return '';
+  
+  // Utiliser CSS.escape si disponible
+  if (typeof CSS !== 'undefined' && CSS.escape) {
+    return CSS.escape(input);
+  }
+  
+  // Fallback: échapper manuellement les caractères problématiques
+  // Caractères qui doivent être échappés en CSS: !"#$%&'()*+,./:;<=>?@[\]^`{|}~
+  const escapeMap = {
+    '\\': '\\\\',
+    '"': '\\"',
+    "'": "\\'",
+    '!': '\\!',
+    '#': '\\#',
+    '$': '\\$',
+    '%': '\\%',
+    '&': '\\&',
+    '(': '\\(',
+    ')': '\\)',
+    '*': '\\*',
+    '+': '\\+',
+    ',': '\\,',
+    '-': '\\-',
+    '.': '\\.',
+    '/': '\\/',
+    ':': '\\:',
+    ';': '\\;',
+    '<': '\\<',
+    '=': '\\=',
+    '>': '\\>',
+    '?': '\\?',
+    '@': '\\@',
+    '[': '\\[',
+    ']': '\\]',
+    '^': '\\^',
+    '`': '\\`',
+    '{': '\\{',
+    '|': '\\|',
+    '}': '\\}',
+    '~': '\\~',
+    ' ': '\\ '
+  };
+  
+  return input.split('').map(char => escapeMap[char] || char).join('');
+}
+
 // Obtenir un sélecteur unique pour un élément
 function getUniqueSelector(element) {
-  // Priorité 1: ID
+  // Priorité 1: ID (avec validation)
   if (element.id) {
-    return `#${element.id}`;
+    const idSelector = `#${element.id}`;
+    
+    // Vérifier si l'ID est un sélecteur CSS valide (ne contient pas de caractères problématiques)
+    if (isValidCssSelector(idSelector)) {
+      return idSelector;
+    }
+    
+    // Si l'ID n'est pas un sélecteur CSS valide, vérifier si l'élément existe avec cet ID
+    // Certains navigateurs/DOM peuvent avoir des IDs avec des caractères spéciaux qui fonctionnent
+    const elementWithId = document.getElementById(element.id);
+    if (elementWithId) {
+      return idSelector;
+    }
+    
+    // Si l'ID contient trop de caractères problématiques, ignorer et passer aux autres méthodes
+    // Les IDs générés par Angular/React contiennent souvent du code JS
+    if (element.id.length > 50 || /[{}()\[\];<>]/.test(element.id)) {
+      console.log('ID ignoré (probablement généré dynamiquement):', element.id.substring(0, 50) + '...');
+    }
   }
   
   // Priorité 2: Name (pour les inputs)
@@ -193,10 +270,27 @@ function getUniqueSelector(element) {
     return `${tagName}[name="${element.name}"]`;
   }
   
-  // Priorité 3: Classe unique
+  // Priorité 3: Classe unique (avec filtrage des classes dynamiques)
   if (element.className && typeof element.className === 'string') {
     const classes = element.className.trim().split(/\s+/).filter(c => c);
     if (classes.length > 0) {
+      // Filtrer les classes qui ressemblent à des codes générés
+      const stableClasses = classes.filter(c => 
+        c.length < 30 && 
+        !/[{}()\[\];<>]/.test(c) &&
+        !c.startsWith('ng-') // Ignorer les classes Angular dynamiques
+      );
+      
+      // Essayer d'abord avec les classes stables
+      if (stableClasses.length > 0) {
+        const classSelector = '.' + stableClasses.join('.');
+        const matchingElements = document.querySelectorAll(classSelector);
+        if (matchingElements.length === 1) {
+          return classSelector;
+        }
+      }
+      
+      // Sinon essayer avec les classes originales (si unique)
       const classSelector = '.' + classes.join('.');
       const matchingElements = document.querySelectorAll(classSelector);
       if (matchingElements.length === 1) {
@@ -216,7 +310,32 @@ function getUniqueSelector(element) {
     }
   }
   
-  // Priorité 5: Chemin complet avec nth-child
+  // Priorité 5: Attribut type + name pour les inputs radio/checkbox
+  if (element.type && element.name && ['radio', 'checkbox'].includes(element.type)) {
+    // Utiliser le sélecteur name + type (plus stable que l'ID)
+    return `${element.tagName.toLowerCase()}[type="${element.type}"][name="${element.name}"]`;
+  }
+  
+  // Priorité 6: Chercher un ID qui ne contient pas de code JS (format stable)
+  if (element.id && !/[{}()\[\];<>]/.test(element.id) && element.id.length < 100) {
+    // Les IDs normaux (sans caractères spéciaux) sont OK
+    return `#${element.id}`;
+  }
+  
+  // Priorité 7: Attribut for pour les labels
+  if (element.tagName === 'LABEL' && element.htmlFor) {
+    return `label[for="${element.htmlFor}"]`;
+  }
+  
+  // Priorité 8: Texte de l'élément pour les labels/options
+  if ((element.tagName === 'LABEL' || element.tagName === 'NG-OPTION') && element.textContent?.trim()) {
+    const text = element.textContent.trim();
+    // Échapper les guillemets dans le texte
+    const escapedText = text.replace(/"/g, '\\"');
+    return `${element.tagName.toLowerCase()}:contains("${escapedText}")`;
+  }
+  
+  // Priorité 9: Chemin complet avec nth-child (amélioré)
   return getFullPath(element);
 }
 
@@ -340,15 +459,64 @@ async function performAction(action) {
 // Trouver un élément avec fallback
 function findElement(selector) {
   try {
+    // Si le sélecteur contient :contains (non natif en CSS), utiliser une recherche par texte
+    if (selector.includes(':contains(')) {
+      const match = selector.match(/(\w+):contains\("([^"]+)"\)/);
+      if (match) {
+        const tagName = match[1].toLowerCase();
+        const text = match[2];
+        const elements = document.querySelectorAll(tagName);
+        for (const el of elements) {
+          if (el.textContent.trim() === text) {
+            return el;
+          }
+        }
+      }
+    }
+    
     // Essayer le sélecteur direct
     let element = document.querySelector(selector);
     if (element) return element;
     
-    // Fallback: essayer de trouver par texte partiel
+    // Fallback 1: Si le sélecteur est un ID avec caractères échappés
+    if (selector.startsWith('#')) {
+      const id = selector.substring(1);
+      element = document.getElementById(id);
+      if (element) return element;
+    }
+    
+    // Fallback 2: Essayer de trouver par texte pour les labels
+    if (selector.startsWith('label')) {
+      const textMatch = selector.match(/label\[for="([^"]+)"\]/);
+      if (textMatch) {
+        const forAttr = textMatch[1];
+        // Trouver le label avec cet attribut for
+        const labels = document.querySelectorAll('label');
+        for (const label of labels) {
+          if (label.htmlFor === forAttr) {
+            return label;
+          }
+        }
+      }
+    }
+    
+    // Fallback 3: nth-of-type
     if (selector.includes(':nth-of-type')) {
       const baseSelector = selector.split(':nth-of-type')[0].trim();
       const elements = document.querySelectorAll(baseSelector);
       if (elements.length > 0) return elements[0];
+    }
+    
+    // Fallback 4: Pour les radio/checkbox, essayer de trouver par name
+    if (selector.includes('[type="radio"]') || selector.includes('[type="checkbox"]')) {
+      const nameMatch = selector.match(/\[name="([^"]+)"\]/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        const typeMatch = selector.match(/\[type="([^"]+)"\]/);
+        const type = typeMatch ? typeMatch[1] : 'radio';
+        const elements = document.querySelectorAll(`input[type="${type}"][name="${name}"]`);
+        if (elements.length > 0) return elements[0];
+      }
     }
     
     return null;
